@@ -4,9 +4,33 @@ import 'package:mblue/mblue_platform_interface.dart';
 import 'package:mblue/mblue_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
-class MockMbluePlatform
-    with MockPlatformInterfaceMixin
-    implements MbluePlatform {
+class MockMbluePlatform with MockPlatformInterfaceMixin implements MbluePlatform {
+  @override
+  Stream<MblueScanUpdate> get scanUpdates => const Stream.empty();
+
+  @override
+  Stream<MblueDevice> get discoveredDevices => const Stream.empty();
+
+  @override
+  Stream<MblueDeviceBatchUpdate> get deviceBatchUpdates => const Stream.empty();
+
+  @override
+  Stream<MblueAdapterState> get adapterState => const Stream.empty();
+
+  @override
+  Stream<MblueConnectionUpdate> get connectionUpdates => const Stream.empty();
+
+  @override
+  Future<void> startScan({Duration? timeout}) async {}
+
+  @override
+  Future<void> stopScan() async {}
+
+  @override
+  Future<void> connect(String deviceId) async {}
+
+  @override
+  Future<void> disconnect(String deviceId) async {}
 
   @override
   Future<String?> getPlatformVersion() => Future.value('42');
