@@ -54,6 +54,7 @@ enum MblueNameSource {
 
 class MblueDevice {
   final String id;
+
   /// User-facing name to display. If null, the device is considered hidden.
   final String? displayName;
   final bool isHidden;
@@ -106,9 +107,7 @@ class MblueDevice {
         ? map['isHidden'] as bool
         : (displayName == null || displayName.trim().isEmpty);
 
-    final nameSource = map['nameSource'] is String
-        ? MblueNameSource.fromString(map['nameSource'] as String)
-        : null;
+    final nameSource = map['nameSource'] is String ? MblueNameSource.fromString(map['nameSource'] as String) : null;
 
     return MblueDevice(
       id: deviceId,
@@ -187,20 +186,29 @@ class MblueScanUpdate {
 }
 
 enum MblueDeviceConnectionState {
-  disconnected,
+  idle,
   connecting,
-  connected,
+  connectedUnverified,
+  connectedVerified,
   disconnecting,
+  disconnected,
   failed;
 
   static MblueDeviceConnectionState fromString(String value) {
     switch (value) {
-      case 'disconnected':
-        return MblueDeviceConnectionState.disconnected;
+      case 'idle':
+        return MblueDeviceConnectionState.idle;
       case 'connecting':
         return MblueDeviceConnectionState.connecting;
+      case 'connected_unverified':
+        return MblueDeviceConnectionState.connectedUnverified;
+      case 'connected_verified':
+        return MblueDeviceConnectionState.connectedVerified;
+      // Backwards compatibility:
+      case 'disconnected':
+        return MblueDeviceConnectionState.disconnected;
       case 'connected':
-        return MblueDeviceConnectionState.connected;
+        return MblueDeviceConnectionState.connectedVerified;
       case 'disconnecting':
         return MblueDeviceConnectionState.disconnecting;
       case 'failed':
@@ -215,16 +223,35 @@ class MblueConnectionUpdate {
   final String deviceId;
   final MblueDeviceConnectionState state;
   final String? error;
+  final String? reason;
+  final int? attempt;
+  final int? maxAttempts;
+  final int? nextDelayMs;
+  final int? timestampMs;
 
-  const MblueConnectionUpdate({required this.deviceId, required this.state, required this.error});
+  const MblueConnectionUpdate({
+    required this.deviceId,
+    required this.state,
+    required this.error,
+    required this.reason,
+    required this.attempt,
+    required this.maxAttempts,
+    required this.nextDelayMs,
+    required this.timestampMs,
+  });
 
   factory MblueConnectionUpdate.fromMap(Map<String, dynamic> map) {
     // Expected event shape:
     // {
     //   "event": "connectionState",
     //   "deviceId": "...",
-    //   "state": "connecting|connected|disconnected|disconnecting|failed",
+    //   "state": "idle|connecting|connected_unverified|connected_verified|disconnecting|disconnected|failed",
     //   "error": String? | null
+    //   "reason": String? | null
+    //   "attempt": int? | null
+    //   "maxAttempts": int? | null
+    //   "nextDelayMs": int? | null
+    //   "timestampMs": int? | null
     // }
     final deviceId = map['deviceId'];
     final state = map['state'];
@@ -235,6 +262,11 @@ class MblueConnectionUpdate {
       deviceId: deviceId,
       state: MblueDeviceConnectionState.fromString(state),
       error: map['error'] is String ? map['error'] as String : null,
+      reason: map['reason'] is String ? map['reason'] as String : null,
+      attempt: map['attempt'] is int ? map['attempt'] as int : null,
+      maxAttempts: map['maxAttempts'] is int ? map['maxAttempts'] as int : null,
+      nextDelayMs: map['nextDelayMs'] is int ? map['nextDelayMs'] as int : null,
+      timestampMs: map['timestampMs'] is int ? map['timestampMs'] as int : null,
     );
   }
 }

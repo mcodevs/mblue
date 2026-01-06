@@ -18,7 +18,7 @@ class _MyAppState extends State<MyApp> {
   final _mblue = Mblue();
 
   final Map<String, MblueDevice> _devicesById = <String, MblueDevice>{};
-  final Map<String, MblueDeviceConnectionState> _connStateById = <String, MblueDeviceConnectionState>{};
+  final Map<String, MblueConnectionUpdate> _connById = <String, MblueConnectionUpdate>{};
   final Map<String, int> _firstSeenMsById = <String, int>{};
   final Set<String> _expandedDeviceIds = <String>{};
 
@@ -44,7 +44,7 @@ class _MyAppState extends State<MyApp> {
           }
           for (final id in batch.removed) {
             _devicesById.remove(id);
-            _connStateById.remove(id);
+            _connById.remove(id);
             _firstSeenMsById.remove(id);
             _expandedDeviceIds.remove(id);
           }
@@ -91,9 +91,15 @@ class _MyAppState extends State<MyApp> {
     _connSub = _mblue.connectionUpdates.listen(
       (update) {
         setState(() {
-          _connStateById[update.deviceId] = update.state;
-          if (update.error != null) {
-            _status = 'Connection error (${update.deviceId}): ${update.error}';
+          _connById[update.deviceId] = update;
+          // Avoid noisy global errors for transient reconnect attempts.
+          if (update.state == MblueDeviceConnectionState.failed && update.error != null) {
+            _status = 'Connection failed: ${update.error}';
+          } else if (update.state == MblueDeviceConnectionState.connectedVerified) {
+            // Clear old error banner once we have a verified connection.
+            if (_status != null && _status!.startsWith('Connection')) {
+              _status = null;
+            }
           }
         });
       },
@@ -125,7 +131,7 @@ class _MyAppState extends State<MyApp> {
         // New scan session: clear UI state so users don't see stale results.
         setState(() {
           _devicesById.clear();
-          _connStateById.clear();
+          _connById.clear();
           _firstSeenMsById.clear();
           _expandedDeviceIds.clear();
         });
@@ -142,14 +148,32 @@ class _MyAppState extends State<MyApp> {
   Future<void> _connect(String deviceId) async {
     setState(() {
       _status = null;
-      _connStateById[deviceId] = MblueDeviceConnectionState.connecting;
+      _connById[deviceId] = MblueConnectionUpdate(
+        deviceId: deviceId,
+        state: MblueDeviceConnectionState.connecting,
+        error: null,
+        reason: 'userInitiated',
+        attempt: null,
+        maxAttempts: null,
+        nextDelayMs: null,
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+      );
     });
     try {
       await _mblue.connect(deviceId);
     } catch (e) {
       setState(() {
         _status = 'Connect failed: $e';
-        _connStateById[deviceId] = MblueDeviceConnectionState.failed;
+        _connById[deviceId] = MblueConnectionUpdate(
+          deviceId: deviceId,
+          state: MblueDeviceConnectionState.failed,
+          error: e.toString(),
+          reason: 'connectCallFailed',
+          attempt: null,
+          maxAttempts: null,
+          nextDelayMs: null,
+          timestampMs: DateTime.now().millisecondsSinceEpoch,
+        );
       });
     }
   }
@@ -157,7 +181,16 @@ class _MyAppState extends State<MyApp> {
   Future<void> _disconnect(String deviceId) async {
     setState(() {
       _status = null;
-      _connStateById[deviceId] = MblueDeviceConnectionState.disconnecting;
+      _connById[deviceId] = MblueConnectionUpdate(
+        deviceId: deviceId,
+        state: MblueDeviceConnectionState.disconnecting,
+        error: null,
+        reason: 'userInitiated',
+        attempt: null,
+        maxAttempts: null,
+        nextDelayMs: null,
+        timestampMs: DateTime.now().millisecondsSinceEpoch,
+      );
     });
     try {
       await _mblue.disconnect(deviceId);
@@ -182,9 +215,15 @@ class _MyAppState extends State<MyApp> {
         final aState = _effectiveConnectionState(a);
         final bState = _effectiveConnectionState(b);
 
-        final aPinned = aState == MblueDeviceConnectionState.connected ? 0 : 1;
-        final bPinned = bState == MblueDeviceConnectionState.connected ? 0 : 1;
-        if (aPinned != bPinned) return aPinned.compareTo(bPinned);
+        int rank(MblueDeviceConnectionState s) {
+          if (s == MblueDeviceConnectionState.connectedVerified) return 0;
+          if (s == MblueDeviceConnectionState.connectedUnverified) return 1;
+          return 2;
+        }
+
+        final aRank = rank(aState);
+        final bRank = rank(bState);
+        if (aRank != bRank) return aRank.compareTo(bRank);
 
         final aFirst = _firstSeenMsById[a.id] ?? a.lastSeenMs;
         final bFirst = _firstSeenMsById[b.id] ?? b.lastSeenMs;
@@ -271,7 +310,7 @@ class _MyAppState extends State<MyApp> {
                                 }
                               });
                             },
-                            connectionStateById: _connStateById,
+                            connectionUpdateById: _connById,
                             onConnect: _connect,
                             onDisconnect: _disconnect,
                           ),
@@ -299,9 +338,9 @@ class _MyAppState extends State<MyApp> {
   }
 
   MblueDeviceConnectionState _effectiveConnectionState(MblueDevice d) {
-    final state = _connStateById[d.id];
-    if (state != null) return state;
-    return d.isConnected ? MblueDeviceConnectionState.connected : MblueDeviceConnectionState.disconnected;
+    final update = _connById[d.id];
+    if (update != null) return update.state;
+    return d.isConnected ? MblueDeviceConnectionState.connectedUnverified : MblueDeviceConnectionState.disconnected;
   }
 }
 
@@ -530,7 +569,7 @@ class _DeviceList extends StatelessWidget {
   final List<MblueDevice> devices;
   final Set<String> expandedDeviceIds;
   final void Function(String deviceId) onToggleExpanded;
-  final Map<String, MblueDeviceConnectionState> connectionStateById;
+  final Map<String, MblueConnectionUpdate> connectionUpdateById;
   final void Function(String deviceId) onConnect;
   final void Function(String deviceId) onDisconnect;
 
@@ -539,7 +578,7 @@ class _DeviceList extends StatelessWidget {
     required this.devices,
     required this.expandedDeviceIds,
     required this.onToggleExpanded,
-    required this.connectionStateById,
+    required this.connectionUpdateById,
     required this.onConnect,
     required this.onDisconnect,
   });
@@ -565,15 +604,21 @@ class _DeviceList extends StatelessWidget {
         itemBuilder: (context, index) {
           final d = visibleDevices[index];
           final expanded = expandedDeviceIds.contains(d.id);
+          final update = connectionUpdateById[d.id];
           final state =
-              connectionStateById[d.id] ??
-              (d.isConnected ? MblueDeviceConnectionState.connected : MblueDeviceConnectionState.disconnected);
+              update?.state ??
+              (d.isConnected
+                  ? MblueDeviceConnectionState.connectedUnverified
+                  : MblueDeviceConnectionState.disconnected);
           final busy =
-              state == MblueDeviceConnectionState.connecting || state == MblueDeviceConnectionState.disconnecting;
+              state == MblueDeviceConnectionState.connecting ||
+              state == MblueDeviceConnectionState.disconnecting ||
+              state == MblueDeviceConnectionState.connectedUnverified;
           final connectable = d.isConnectable != false;
 
           return _DeviceRow(
             device: d,
+            update: update,
             state: state,
             isBusy: busy,
             isConnectable: connectable,
@@ -590,6 +635,7 @@ class _DeviceList extends StatelessWidget {
 
 class _DeviceRow extends StatelessWidget {
   final MblueDevice device;
+  final MblueConnectionUpdate? update;
   final MblueDeviceConnectionState state;
   final bool isBusy;
   final bool isConnectable;
@@ -600,6 +646,7 @@ class _DeviceRow extends StatelessWidget {
 
   const _DeviceRow({
     required this.device,
+    required this.update,
     required this.state,
     required this.isBusy,
     required this.isConnectable,
@@ -614,21 +661,42 @@ class _DeviceRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // This app intentionally hides unnamed devices; displayName should be present.
     final name = device.displayName?.trim() ?? '';
-    final bool isConnected = state == MblueDeviceConnectionState.connected;
+    final bool isConnected =
+        state == MblueDeviceConnectionState.connectedVerified ||
+        state == MblueDeviceConnectionState.connectedUnverified;
 
-    final status = switch (state) {
-      MblueDeviceConnectionState.connected => 'Connected',
-      MblueDeviceConnectionState.connecting => 'Connecting…',
-      MblueDeviceConnectionState.disconnecting => 'Disconnecting…',
-      MblueDeviceConnectionState.disconnected => 'Disconnected',
-      MblueDeviceConnectionState.failed => 'Failed',
-    };
+    String statusLabel() {
+      switch (state) {
+        case MblueDeviceConnectionState.connectedVerified:
+          return 'Connected (Verified)';
+        case MblueDeviceConnectionState.connectedUnverified:
+          return 'Connected (Verifying…)';
+        case MblueDeviceConnectionState.connecting:
+          if (update?.reason == 'autoReconnect' && update?.attempt != null && update?.maxAttempts != null) {
+            return 'Reconnecting… (${update!.attempt}/${update!.maxAttempts})';
+          }
+          return 'Connecting…';
+        case MblueDeviceConnectionState.disconnecting:
+          return 'Disconnecting…';
+        case MblueDeviceConnectionState.disconnected:
+          if (update?.reason == 'unexpectedDisconnect') return 'Connection lost';
+          return 'Disconnected';
+        case MblueDeviceConnectionState.failed:
+          return 'Failed';
+        case MblueDeviceConnectionState.idle:
+          return 'Disconnected';
+      }
+    }
+
+    final status = statusLabel();
 
     final statusColor = switch (state) {
-      MblueDeviceConnectionState.connected => const Color(0xFF34C759),
+      MblueDeviceConnectionState.connectedVerified => const Color(0xFF34C759),
+      MblueDeviceConnectionState.connectedUnverified => const Color(0xFF0A84FF),
       MblueDeviceConnectionState.connecting => const Color(0xFF0A84FF),
       MblueDeviceConnectionState.disconnecting => const Color(0xFF0A84FF),
       MblueDeviceConnectionState.disconnected => const Color(0xFF8E8E93),
+      MblueDeviceConnectionState.idle => const Color(0xFF8E8E93),
       MblueDeviceConnectionState.failed => const Color(0xFFFF3B30),
     };
 

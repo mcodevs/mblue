@@ -46,6 +46,7 @@ public class MbluePlugin: NSObject, FlutterPlugin {
         "isScanning": self.bluetoothManager.isScanning,
         "reason": "initial"
       ])
+      self.scanStreamHandler.send(self.bluetoothManager.visibleDeviceBatchSnapshotEvent())
     }
 
     connectionStreamHandler.onListenCallback = { [weak self] in
@@ -54,6 +55,9 @@ public class MbluePlugin: NSObject, FlutterPlugin {
         "event": "adapterState",
         "state": self.bluetoothManager.adapterStateString
       ])
+      for event in self.bluetoothManager.connectionStateSnapshotEvents() {
+        self.connectionStreamHandler.send(event)
+      }
     }
   }
 
